@@ -38,14 +38,16 @@ void SIM908_pwr_on(void)
 
 void sendWithHWFlowCtrl(char *buf, unsigned int bytes)
 {
-    unsigned int timeout = 5000;
+    unsigned int timeout = 50;
     unsigned char i = 0;
     for( i = 0; i < bytes; i++ )
     {
+    	timeout = 10;
         while( palReadPad(GPIOB, GPIOB_USART3_CTS) == 0 )
         {
             timeout--;
             if( timeout <= 0 ) break;
+            //chThdSleepMilliseconds(1);
         }
         sdPut(&SD3,buf[i]);
     }
