@@ -45,6 +45,7 @@
  */
 #define STM32F10X_HD
 
+
 /*
  * IO pins assignments.
  */

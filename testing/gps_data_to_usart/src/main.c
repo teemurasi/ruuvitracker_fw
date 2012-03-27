@@ -39,13 +39,33 @@
 // Setup a working area with a 32 byte stack for LED flashing thread
 static WORKING_AREA(led_thread, 32);
 static WORKING_AREA(led_thread2, 32);
-static WORKING_AREA(gps_thread, 256);
 static WORKING_AREA(usart1_thread, 256);
 static WORKING_AREA(usart2_thread, 256);
+static WORKING_AREA(usart3_thread, 256);
 
 // Global variables
 volatile char usart1_rxbuf[256];
 volatile unsigned int usart1_rxbuf_ptr;
+volatile char usart2_rxbuf[256];
+volatile unsigned int usart2_rxbuf_ptr;
+volatile char usart3_rxbuf[256];
+volatile unsigned int usart3_rxbuf_ptr;
+
+char welcome[] = {'R','u','u','v','i','T','r','a','c','k','e','r',' ','R','E','V','A',' ','v','0','.','1','\r','\n'};
+
+struct Mutex serial1_tx_mutex;
+
+// Function to send welcome message to USART1
+void sendWelcome(void)
+{
+	uint16_t i = 0;
+	//while( chMtxTryLock(&serial1_tx_mutex) != TRUE );
+	for( i = 0; i < sizeof(welcome); i++ )
+	{
+		sdPut(&SD1, welcome[i]);
+	}
+	//chMtxUnlockAll();
+}
 
 // Thread for GPIOC_LED1
 static msg_t led1Thread(void *UNUSED(arg))
@@ -53,14 +73,6 @@ static msg_t led1Thread(void *UNUSED(arg))
     while(TRUE)
     {
         // Toggle GPIOC_LED1
-        //palTogglePad(GPIOC, GPIOC_LED1);
-        //chThdSleepMilliseconds(5000);
-		//SIM908sendCmd(110);
-		//chThdSleepMilliseconds(5000);
-		//SIM908sendCmd(120);
-	    // Send one character to serial port
-	    //sdPutTimeout(&SD1, 'C', 1);
-        // Sleep
         chThdSleepMilliseconds(2000);
         palSetPad(GPIOC, GPIOC_LED1);
         chThdSleepMilliseconds(100);
@@ -82,39 +94,6 @@ static msg_t led2Thread(void *UNUSED(arg))
     return 0;
 }
 
-// Thread for GPS
-static msg_t gpsThread(void *UNUSED(arg))
-{
-    // TODO: Implement state machine with message queue to set the operating mode
-    
-    
-    // Initialize and power on the SIM908 module
-    /*initSIM908();
-    SIM908_pwr_on();
-    SIM908_autobaud_init();
-    chThdSleepMilliseconds(100);
-    
-    // Send command to power on GPS engine
-    palSetPad(GPIOC, GPIOC_LED2);
-    SIM908sendCmd(GPS_PWR_ON);
-    palClearPad(GPIOC, GPIOC_LED2);
-    chThdSleepMilliseconds(5000);
-    SIM908sendCmd(GPS_RST_COLD);
-    //SIM908sendCmd(110);
-    chThdSleepMilliseconds(5000);
-    SIM908sendCmd(GPS_GET_STATUS);
-    //sdWrite(&SD3,13,"AT+CGPSPWR=1\n");*/
-    
-    uint8_t byte = 0;
-    
-    while(TRUE)
-    {
-        sdRead( &SD3, &byte, 1);
-        sdPut(&SD1, byte);
-    }
-    return 0;
-}
-
 // Thread for USART1
 static msg_t usart1Thread(void *UNUSED(arg))
 {
@@ -129,7 +108,7 @@ static msg_t usart1Thread(void *UNUSED(arg))
     	usart1_rxbuf[usart1_rxbuf_ptr++] = byte;
     	if( (byte == '\r') || (usart1_rxbuf_ptr >= 255) )
     	{
-    		if( (usart1_rxbuf[0] == 'P') )
+    		if( (usart1_rxbuf[0] == 'P') && (usart1_rxbuf_ptr == 2) )
     		{
 				// Initialize and power on the SIM908 module
     			palSetPad(GPIOC, GPIOC_LED2);
@@ -138,6 +117,10 @@ static msg_t usart1Thread(void *UNUSED(arg))
 				SIM908_autobaud_init();
 				chThdSleepMilliseconds(100);
 				palClearPad(GPIOC, GPIOC_LED2);
+    		}
+    		else if( (usart1_rxbuf[0] == 'V') && (usart1_rxbuf_ptr == 2) )
+    		{
+    			sendWelcome();
     		}
     		else
     		{
@@ -156,17 +139,58 @@ static msg_t usart2Thread(void *UNUSED(arg))
 
 
 	uint8_t byte = 0;
+	uint16_t i = 0;
     while(TRUE)
     {
     	sdRead( &SD2, &byte, 1);
-    	sdPut(&SD1, byte);
+		usart2_rxbuf[usart2_rxbuf_ptr++] = byte;
+		if( (byte == '\n') || (usart2_rxbuf_ptr >= 255) )
+		{
+			while( chMtxTryLock(&serial1_tx_mutex) != TRUE );
+			for( i = 0; i < usart2_rxbuf_ptr; i++ )
+			{
+				sdPut(&SD1, usart2_rxbuf[i]);
+			}
+			chMtxUnlockAll();
+			usart2_rxbuf_ptr = 0;
+		}
     }
     return 0;
 }
 
+// Thread for USART3
+static msg_t usart3Thread(void *UNUSED(arg))
+{
+    uint8_t byte = 0;
+    uint16_t i = 0;
+    while(TRUE)
+    {
+        sdRead( &SD3, &byte, 1);
+        usart3_rxbuf[usart3_rxbuf_ptr++] = byte;
+		if( (byte == '\n') || (usart3_rxbuf_ptr >= 255) )
+		{
+			while( chMtxTryLock(&serial1_tx_mutex) != TRUE );
+			for( i = 0; i < usart3_rxbuf_ptr; i++ )
+			{
+				sdPut(&SD1, usart3_rxbuf[i]);
+			}
+			chMtxUnlockAll();
+			usart3_rxbuf_ptr = 0;
+		}
+    }
+    return 0;
+}
+
+
+
 int main(void)
 {
 	usart1_rxbuf_ptr = 0;
+	usart2_rxbuf_ptr = 0;
+	usart3_rxbuf_ptr = 0;
+
+	// Mutex is used to reserve USART1 transmitter for one thread at time
+	chMtxInit(&serial1_tx_mutex);
 
     // Initialize ChibiOS HAL and core
     halInit();
@@ -174,23 +198,18 @@ int main(void)
     palClearPad(GPIOC, GPIOC_LED2);
     palClearPad(GPIOC, GPIOC_LED1);
     
-    // Start serial driver for USART1 using default configuration
-    sdStart(&SD1, NULL);
-    /*SerialConfig serial2_cfg = {
-		115200,
-		0,
-		0,
-		0
-	};*/
-	SerialConfig serial3_cfg = {
+    // Initialize configuration for USART3 used with SIM908 for AT-commands
+    // With autobauding (default) it is only possible to use 57600 baud speed
+    SerialConfig serial3_cfg = {
 		57600,
 		0,
 		0,
 		0
 	};
 
-	// For testing purposes, gps debug is relayed to usart 1
-
+    // Start serial driver for USART1 using default configuration
+    sdStart(&SD1, NULL);
+    sendWelcome();
 	// Start serial driver for USART2 (SIM908 Debug output and GPS data)
 	sdStart(&SD2, NULL);
 	// Start serial driver for USART3 (SIM908 serial interface for AT commands)
@@ -205,9 +224,8 @@ int main(void)
     chThdCreateStatic(usart1_thread, sizeof(usart1_thread), NORMALPRIO, usart1Thread, NULL);
     // Start a thread dedicated to handle USART2 communication
     chThdCreateStatic(usart2_thread, sizeof(usart2_thread), NORMALPRIO, usart2Thread, NULL);
-    
-    // Start a thread dedicated to handle GPS communication
-    chThdCreateStatic(gps_thread, sizeof(gps_thread), NORMALPRIO, gpsThread, NULL);
+    // Start a thread dedicated to handle USART3 communication
+    chThdCreateStatic(usart3_thread, sizeof(usart3_thread), NORMALPRIO, usart3Thread, NULL);
 
     // main loop
     while (TRUE)
